@@ -30,9 +30,22 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
+
+#ifdef WIN32
+#define STAT FUSE_STAT
+#else
+#define STAT stat
+#endif
+
+#ifdef WIN32 // these don't exist on Windows
+#define getuid() 123;
+#define getgid() 456;
+#endif
 
 #define AFC_SERVICE_NAME "com.apple.afc"
 #define AFC2_SERVICE_NAME "com.apple.afc2"
@@ -205,7 +218,7 @@ static int get_afc_file_mode(afc_file_mode_t *afc_mode, int flags)
 	return 0;
 }
 
-static int ifuse_getattr(const char *path, struct stat *stbuf)
+static int ifuse_getattr(const char *path, struct STAT *stbuf)
 {
 	int i;
 	int res = 0;
@@ -214,7 +227,7 @@ static int ifuse_getattr(const char *path, struct stat *stbuf)
 	afc_client_t afc = fuse_get_context()->private_data;
 	afc_error_t ret = afc_get_file_info(afc, path, &info);
 
-	memset(stbuf, 0, sizeof(struct stat));
+	memset(stbuf, 0, sizeof(struct STAT));
 	if (ret != AFC_E_SUCCESS) {
 		int e = get_afc_error_as_errno(ret);
 		res = -e;
@@ -240,13 +253,19 @@ static int ifuse_getattr(const char *path, struct stat *stbuf)
 					stbuf->st_mode = S_IFCHR;
 				} else if (!strcmp(info[i+1], "S_IFIFO")) {
 					stbuf->st_mode = S_IFIFO;
+#ifndef WIN32					
 				} else if (!strcmp(info[i+1], "S_IFSOCK")) {
 					stbuf->st_mode = S_IFSOCK;
+#endif					
 				}
 			} else if (!strcmp(info[i], "st_nlink")) {
 				stbuf->st_nlink = atoi(info[i+1]);
 			} else if (!strcmp(info[i], "st_mtime")) {
+#ifndef WIN32				
 				stbuf->st_mtime = (time_t)(atoll(info[i+1]) / 1000000000);
+#else
+				stbuf->st_mtim.tv_sec = (time_t)(atoll(info[i + 1]) / 1000000000);
+#endif
 			}
 #ifdef _DARWIN_FEATURE_64_BIT_INODE
 			else if (!strcmp(info[i], "st_birthtime")) { /* available on iOS 7+ */
@@ -779,7 +798,7 @@ int main(int argc, char *argv[])
 {
 	int res = EXIT_FAILURE;
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-	struct stat mst;
+	struct STAT mst;
 	idevice_error_t err = IDEVICE_E_UNKNOWN_ERROR;
 	lockdownd_error_t ret = LOCKDOWN_E_UNKNOWN_ERROR;
 	enum idevice_options lookup_opts = IDEVICE_LOOKUP_USBMUX | IDEVICE_LOOKUP_NETWORK;
